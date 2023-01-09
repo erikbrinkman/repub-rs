@@ -55,22 +55,18 @@ enum Style {
         #[arg(long)]
         strip_links: bool,
 
-        /// Remove nested divs, flattening the structure
-        #[arg(long)]
-        flatten_divs: bool,
-
         /// Match image urls that are at least this similar
         ///
         /// 1.0 indicates only exact matches count. Lower numbers will be more lenient but still
         /// select the closet url.
-        #[arg(long, default_value_t = 1.0)]
+        #[arg(long, default_value_t = 0.0)]
         href_sim_thresh: f64,
 
         /// Brighten images
         ///
         /// 1.0 indicates no brightening. Slightly larger will result in mild brightening, slightly
         /// lower will result in some darkening.
-        #[arg(long)]
+        #[arg(long, default_value_t = 1.0)]
         brighten: f32,
 
         /// Create a V3.0 epub
@@ -78,12 +74,16 @@ enum Style {
         epub_v3: bool,
 
         /// Attach custom css
-        #[arg(short, long)]
+        #[arg(long)]
         css: Option<String>,
 
         /// Specify how to handle images
-        #[arg(short, long, value_enum, default_value_t = Images::Strip)]
+        #[arg(long, value_enum, default_value_t = Images::Strip)]
         images: Images,
+
+        /// Quality for jpeg export
+        #[arg(long, default_value_t = 90)]
+        jpeg_quality: u8,
 
         /// Images wider than this will be resized
         #[arg(long)]
@@ -108,10 +108,10 @@ pub fn main() {
             include_byline,
             include_cover,
             strip_links,
-            flatten_divs,
             href_sim_thresh,
             brighten,
             epub_v3,
+            jpeg_quality,
             images,
             max_width,
             max_height,
@@ -122,9 +122,9 @@ pub fn main() {
             include_byline,
             include_cover,
             strip_links,
-            flatten_divs,
             href_sim_thresh,
             image_handling: images.into(),
+            jpeg_quality,
             css: css.unwrap_or_else(|| "".into()),
             max_width: max_width.unwrap_or(u32::MAX),
             max_height: max_height.unwrap_or(u32::MAX),

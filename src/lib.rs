@@ -31,15 +31,16 @@
 //! ```
 #![warn(missing_docs)]
 pub use epub_builder::EpubVersion;
-use epub_builder::{EpubBuilder, EpubContent, Error as EpubError, ReferenceType, ZipLibrary};
+use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
+use eyre::Report;
 pub use image::imageops::FilterType;
 use image::io::Reader;
-use image::{DynamicImage, ImageFormat, ImageOutputFormat};
+use image::{DynamicImage, ImageFormat, ImageOutputFormat, Pixel};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
 use mail_parser::{Header, HeaderName, HeaderValue, Message, PartType, RfcHeader};
 use markup5ever::{namespace_url, ns, Namespace, Prefix, QualName};
-use ordered_float::NotNan;
 use readable_readability::Readability;
+use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::io::{Cursor, Seek, Write};
@@ -69,17 +70,17 @@ pub struct Repub<Css> {
     pub include_cover: bool,
     /// if true, strip all links from the epub
     pub strip_links: bool,
-    /// if true, flatten all unnecessary divs from the content
-    pub flatten_divs: bool,
     /// threshold for approximate url matching
     ///
     /// Due to some bugs with chromiums renderer, some urls will be stripped from the final mhtml,
     /// and as a fallback this can be set to a value less then one to allow for approximate
-    /// matching. 0.0 will accept any image, 1.0 only accepts complete matches and is significantly
-    /// faster than any other setting.
+    /// matching. 1.0 will accept any reasonable image, 0.0 only accepts complete matches and is
+    /// significantly faster than any other setting.
     pub href_sim_thresh: f64,
     /// how to handle images
     pub image_handling: ImageHandling,
+    /// quality of jpeg rendering
+    pub jpeg_quality: u8,
     /// optional css content to render to the final epub
     pub css: Css,
     /// images wider than this will be resized
@@ -104,12 +105,12 @@ impl Repub<&'static str> {
         Self {
             include_url: false,
             include_title: true,
-            include_byline: false,
-            include_cover: false,
+            include_byline: true,
+            include_cover: true,
             strip_links: true,
-            flatten_divs: false,
-            href_sim_thresh: 0.7,
+            href_sim_thresh: 0.3,
             image_handling: ImageHandling::Filter,
+            jpeg_quality: 90,
             css: "
 p {
   margin-top: 1em;
@@ -147,9 +148,9 @@ impl Default for Repub<&'static str> {
             include_byline: false,
             include_cover: false,
             strip_links: false,
-            flatten_divs: false,
-            href_sim_thresh: 1.0,
+            href_sim_thresh: 0.0,
             image_handling: ImageHandling::default(),
+            jpeg_quality: 99,
             css: "",
             max_width: u32::MAX,
             max_height: u32::MAX,
@@ -167,14 +168,16 @@ pub enum Error {
     MhtmlParseError,
     /// the mhtml didn't conform to the format expected from a chrome page export
     MhtmlFormatError,
+    /// an error occured when trying to convert images
+    ImageConversionError,
     /// an error occured when creating the epub
     EpubCreationError,
     /// an error occured when writing the epub
     EpubWritingError,
 }
 
-impl From<EpubError> for Error {
-    fn from(_: EpubError) -> Self {
+impl From<Report> for Error {
+    fn from(_: Report) -> Self {
         Error::EpubCreationError
     }
 }
@@ -194,7 +197,9 @@ fn new_elem(
     children: impl IntoIterator<Item = NodeRef>,
 ) -> NodeRef {
     let node = NodeRef::new_element(
-        QualName::new(None, ns!(html), name.into()),
+        // NOTE the lack of namespace here is important so we close entities like link and img that
+        // go unclosed in html
+        QualName::new(None, ns!(), name.into()),
         attributes.into_iter().map(|(ns, prefix, attr, value)| {
             (
                 ExpandedName::new(ns, attr.as_ref()),
@@ -227,33 +232,39 @@ fn next_node_skip(node: &NodeRef) -> Option<NodeRef> {
         .or_else(|| node.ancestors().find_map(|n| n.next_sibling()))
 }
 
+fn brighten(img: DynamicImage, factor: f32) -> DynamicImage {
+    let mut rgba = img.into_rgba8();
+    for y in 0..rgba.height() {
+        for x in 0..rgba.width() {
+            let &(mut val) = rgba.get_pixel(x, y);
+            val.apply_without_alpha(|c| u8::MAX - ((u8::MAX - c) as f32 / factor) as u8);
+            rgba.put_pixel(x, y, val);
+        }
+    }
+    DynamicImage::ImageRgba8(rgba)
+}
+
 impl<C: AsRef<str>> Repub<C> {
     /// find a close match to an image url
     fn find_url<'a>(
         &self,
         data: &'a BTreeMap<&'a str, (&'a str, &'a [u8])>,
         src: &str,
-    ) -> Option<(NotNan<f64>, String, &'a str, &'a [u8])> {
+    ) -> Option<(Reverse<usize>, String, &'a str, &'a [u8])> {
         let decoded = percent_encoding::percent_decode_str(src)
             .decode_utf8()
             .ok()?;
         if let Some((mime, data)) = data.get(decoded.as_ref()) {
-            Some((NotNan::new(1.0).unwrap(), decoded.to_string(), mime, data))
-        } else if self.href_sim_thresh < 1.0 {
-            // NOTE maybe switch to fuzzy_trie for this... want to investigate library more
-            let (dist, mime, data) = data
+            Some((Reverse(0), decoded.to_string(), mime, data))
+        } else if self.href_sim_thresh > 0.0 {
+            let thresh: usize =
+                f64::trunc(decoded.chars().count() as f64 * self.href_sim_thresh) as usize;
+            let (dist, href, mime, data) = data
                 .iter()
-                .map(|(href, (mime, data))| {
-                    (
-                        NotNan::new(1.0 - strsim::normalized_levenshtein(href, decoded.as_ref()))
-                            .unwrap(),
-                        mime,
-                        data,
-                    )
-                })
+                .map(|(href, (mime, data))| (strsim::levenshtein(href, &decoded), href, mime, data))
                 .min()?;
-            if dist.as_ref() > &self.href_sim_thresh {
-                Some((dist, decoded.to_string(), mime, data))
+            if dist < thresh {
+                Some((Reverse(dist), href.to_string(), mime, data))
             } else {
                 None
             }
@@ -269,31 +280,25 @@ impl<C: AsRef<str>> Repub<C> {
         let img = match ImageFormat::from_mime_type(format!("image/{}", mime.as_ref())) {
             Some(fmt) => Reader::with_format(cursor, fmt),
             None => Reader::new(cursor),
-        }
-        .with_guessed_format()
-        .ok()?
-        .decode()
-        .ok()?;
-        let img = if img.width() > self.max_width || img.height() > self.max_height {
-            img.resize(self.max_width, self.max_height, self.filter_type)
-        } else {
-            img
+        };
+        let mut img = img.with_guessed_format().ok()?.decode().ok()?;
+        if img.width() > self.max_width || img.height() > self.max_height {
+            img = img.resize(self.max_width, self.max_height, self.filter_type)
         };
         // since we can't do a cappy brighten, we invert, darken and invert again
         if self.brighten == 1.0 {
             Some(img)
         } else {
-            let mut img = img;
-            img.invert();
-            let mut img =
-                img.filter3x3(&[0.0, 0.0, 0.0, 0.0, 1.0 / self.brighten, 0.0, 0.0, 0.0, 0.0]);
-            img.invert();
-            Some(img)
+            Some(brighten(img, self.brighten))
         }
     }
 
     /// convert an mhtml string to an epub with current options
-    pub fn mhtml_to_epub(&self, mhtml: impl AsRef<str>, out: &mut impl Write) -> Result<(), Error> {
+    pub fn mhtml_to_epub(
+        &self,
+        mhtml: impl AsRef<str>,
+        out: &mut impl Write,
+    ) -> Result<Option<String>, Error> {
         // parse mhtml and get get header values
         let msg = Message::parse(mhtml.as_ref().as_bytes()).ok_or(Error::MhtmlParseError)?;
         let (first, rest) = msg.parts.split_first().ok_or(Error::MhtmlFormatError)?;
@@ -368,11 +373,10 @@ impl<C: AsRef<str>> Repub<C> {
                 .and_then(|(_, _, mime, img)| self.convert_img(img, mime))
             {
                 let mut buff = Cursor::new(Vec::new());
-                // buffer io is safe
                 image
-                    .write_to(&mut buff, ImageOutputFormat::Jpeg(7))
-                    .unwrap();
-                buff.rewind().unwrap();
+                    .write_to(&mut buff, ImageOutputFormat::Jpeg(self.jpeg_quality))
+                    .or(Err(Error::ImageConversionError))?;
+                buff.rewind().or(Err(Error::ImageConversionError))?;
                 epub.add_cover_image("image_cover.jpg", buff, "image/jpg")?;
                 Some("image_cover.jpg")
             } else {
@@ -391,13 +395,6 @@ impl<C: AsRef<str>> Repub<C> {
             if let Some(data) = node.as_element() {
                 match &*data.name.local {
                     "a" if self.strip_links => {
-                        while let Some(child) = node.last_child() {
-                            node.insert_after(child);
-                        }
-                        current = next_node_skip(&node);
-                        node.detach();
-                    }
-                    "div" if self.flatten_divs => {
                         while let Some(child) = node.last_child() {
                             node.insert_after(child);
                         }
@@ -463,41 +460,9 @@ impl<C: AsRef<str>> Repub<C> {
                         current = next_node_skip(&node);
                         node.detach();
                     }
-                    "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "li"
-                    | "dl" | "dt" | "dd" | "pre" | "blockquote" | "a" | "span" | "br" | "em"
-                    | "strong" | "table" | "caption" | "figcaption" | "thead" | "tfoot"
-                    | "tbody" | "tr" | "th" | "td" | "svg" => {
-                        // allowed tags
-                        // NOTE drain_filter wil be better once stabalized
-                        let mut attrs = data.attributes.borrow_mut();
-                        attrs.map = attrs
-                            .map
-                            .iter()
-                            .filter(|(attr, _)| {
-                                matches!(
-                                    &*attr.local,
-                                    "alt"
-                                        | "id"
-                                        | "title"
-                                        | "src"
-                                        | "href"
-                                        | "lang"
-                                        | "rel"
-                                        | "style"
-                                        | "target"
-                                )
-                            })
-                            .map(|(attr, val)| (attr.clone(), val.clone()))
-                            .collect();
-                        current = next_node(&node);
-                    }
                     _ => {
-                        // disallowed tag
-                        for child in node.children().rev() {
-                            node.insert_after(child);
-                        }
-                        current = next_node_skip(&node);
-                        node.detach();
+                        // other element
+                        current = next_node(&node);
                     }
                 }
             } else {
@@ -527,12 +492,20 @@ impl<C: AsRef<str>> Repub<C> {
         // add byline
         if self.include_byline {
             if let Some(byline) = &meta.byline {
-                body_node.append(new_attrless_elem("h3", [NodeRef::new_text(byline)]));
+                body_node.append(new_elem(
+                    "address",
+                    [(ns!(), None, "style", "font-style: italic")],
+                    [NodeRef::new_text(byline)],
+                ));
             }
         }
         // add cover image, only Some if requested
         if let Some(src) = cover_img {
-            body_node.append(new_elem("img", [(ns!(), None, "src", src)], []));
+            body_node.append(new_elem(
+                "div",
+                [(ns!(), None, "style", "margin-top: 1em")],
+                [new_elem("img", [(ns!(), None, "src", src)], [])],
+            ));
         }
         // append content stripping body tag
         if node
@@ -593,10 +566,11 @@ impl<C: AsRef<str>> Repub<C> {
         );
         // create document
         let document = NodeRef::new_document();
-        document.append(NodeRef::new_doctype("html", "", ""));
+        document.append(NodeRef::new_doctype(r#"html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd""#, "", ""));
         document.append(html_node);
 
         // actually append content
+        // NOTE kuchiki doesn't appent the trailing xml ?> properly so this is encoded manuall
         let mut content: Vec<_> = r#"<?xml version="1.0" encoding="UTF-8"?>"#.as_bytes().into();
         document.serialize(&mut content).unwrap();
         epub.add_content(
@@ -608,7 +582,8 @@ impl<C: AsRef<str>> Repub<C> {
         // add reamining options and serialize
         epub.stylesheet(self.css.as_ref().as_bytes())?;
         epub.epub_version(self.epub_version);
-        epub.generate(out).or(Err(Error::EpubWritingError))
+        epub.generate(out).or(Err(Error::EpubWritingError))?;
+        Ok(title.map(str::to_string))
     }
 }
 
@@ -711,9 +686,9 @@ Content-Location: {}
             include_byline: true,
             include_cover: true,
             strip_links: true,
-            flatten_divs: true,
-            href_sim_thresh: 0.3,
+            href_sim_thresh: 1.0,
             image_handling: ImageHandling::Keep,
+            jpeg_quality: 50,
             css: "div { margin: 1em }",
             max_width: 100,
             max_height: 100,
@@ -727,14 +702,20 @@ Content-Location: {}
         let mut doc = EpubDoc::from_reader(&mut buff).unwrap();
         assert_eq!(*doc.metadata.get("title").unwrap(), ["a fake doc"]);
         assert_eq!(
-            doc.resources.get("stylesheet_css"),
+            doc.resources.get("stylesheet.css"),
             Some(&("OEBPS/stylesheet.css".into(), "text/css".into()))
         );
+        let (css, _) = doc.get_resource_str("stylesheet.css").unwrap();
+        assert_eq!(css, "div { margin: 1em }");
         let (contents, _) = doc.get_current_str().unwrap();
+        eprintln!("{}", contents);
+        assert!(contents.contains(r#"<?xml version="1.0" encoding="UTF-8"?>"#));
+        assert!(contents.contains(r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">"#));
+        assert!(contents.contains(r#"<html xmlns:epub="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/1999/xhtml">"#));
         assert!(contents
             .contains(r#"<a href="https://test.html">https://test.html</a><h1>a fake doc</h1>"#));
-        assert!(contents.contains(r#"<p>text</p><img src="image_0.jpg"><p>more text</p>"#));
-        assert!(contents.contains(r#"href="stylesheet.css""#));
-        assert!(contents.contains(r#"<!DOCTYPE html>"#));
+        assert!(contents.contains(r#"<p>text</p><img src="image_0.jpg"></img><p>more text</p>"#));
+        assert!(contents
+            .contains(r#"<link href="stylesheet.css" rel="stylesheet" type="text/css"></link>"#));
     }
 }
