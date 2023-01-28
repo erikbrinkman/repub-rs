@@ -44,6 +44,8 @@ use readable_readability::Readability;
 use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
+use std::fmt::{Display, Error as FmtError, Formatter};
 use std::io::{Cursor, Seek, Write};
 
 /// How to handle images in the summarized article.
@@ -164,7 +166,6 @@ impl Default for Repub<&'static str> {
     }
 }
 
-// FIXME derive / impl Error
 /// Possible errors during epub creation.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -181,6 +182,14 @@ pub enum Error {
     /// an error occured when writing the epub
     EpubWritingError,
 }
+
+impl Display for Error {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), FmtError> {
+        write!(fmt, "{self:?}")
+    }
+}
+
+impl StdError for Error {}
 
 impl From<Report> for Error {
     fn from(_: Report) -> Self {
