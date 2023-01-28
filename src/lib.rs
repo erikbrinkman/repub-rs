@@ -167,6 +167,7 @@ impl Default for Repub<&'static str> {
 }
 
 /// Possible errors during epub creation.
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     /// image format wasn't valid
