@@ -35,7 +35,8 @@ use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
 use eyre::Report;
 pub use image::imageops::FilterType;
 use image::io::Reader;
-use image::{DynamicImage, ImageFormat, ImageOutputFormat, Pixel};
+pub use image::ImageOutputFormat;
+use image::{DynamicImage, ImageFormat, Pixel};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
 use mail_parser::{Header, HeaderName, HeaderValue, Message, PartType, RfcHeader};
 use markup5ever::{namespace_url, ns, Namespace, Prefix, QualName};
@@ -79,8 +80,10 @@ pub struct Repub<Css> {
     pub href_sim_thresh: f64,
     /// how to handle images
     pub image_handling: ImageHandling,
-    /// quality of jpeg rendering
-    pub jpeg_quality: u8,
+    /// format for images
+    ///
+    /// Conversion will error if this isn't Jpeg or Png
+    pub image_format: ImageOutputFormat,
     /// optional css content to render to the final epub
     pub css: Css,
     /// images wider than this will be resized
@@ -110,7 +113,7 @@ impl Repub<&'static str> {
             strip_links: true,
             href_sim_thresh: 0.3,
             image_handling: ImageHandling::Filter,
-            jpeg_quality: 90,
+            image_format: ImageOutputFormat::Jpeg(90),
             css: "
 p {
   margin-top: 1em;
@@ -150,7 +153,7 @@ impl Default for Repub<&'static str> {
             strip_links: false,
             href_sim_thresh: 0.0,
             image_handling: ImageHandling::default(),
-            jpeg_quality: 99,
+            image_format: ImageOutputFormat::Png,
             css: "",
             max_width: u32::MAX,
             max_height: u32::MAX,
@@ -161,9 +164,12 @@ impl Default for Repub<&'static str> {
     }
 }
 
+// FIXME derive / impl Error
 /// Possible errors during epub creation.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
+    /// image format wasn't valid
+    InvalidImageFormat,
     /// an error happened when parsing the mhtml
     MhtmlParseError,
     /// the mhtml didn't conform to the format expected from a chrome page export
@@ -245,6 +251,24 @@ fn brighten(img: DynamicImage, factor: f32) -> DynamicImage {
 }
 
 impl<C: AsRef<str>> Repub<C> {
+    ///  extension of written images
+    fn img_ext(&self) -> Result<&'static str, Error> {
+        match self.image_format {
+            ImageOutputFormat::Png => Ok("png"),
+            ImageOutputFormat::Jpeg(_) => Ok("jpg"),
+            _ => Err(Error::InvalidImageFormat),
+        }
+    }
+
+    /// mime type of written images
+    fn img_mime(&self) -> Result<&'static str, Error> {
+        match self.image_format {
+            ImageOutputFormat::Png => Ok("image/png"),
+            ImageOutputFormat::Jpeg(_) => Ok("image/jpeg"),
+            _ => Err(Error::InvalidImageFormat),
+        }
+    }
+
     /// find a close match to an image url
     fn find_url<'a>(
         &self,
@@ -374,11 +398,12 @@ impl<C: AsRef<str>> Repub<C> {
             {
                 let mut buff = Cursor::new(Vec::new());
                 image
-                    .write_to(&mut buff, ImageOutputFormat::Jpeg(self.jpeg_quality))
+                    .write_to(&mut buff, self.image_format.clone())
                     .or(Err(Error::ImageConversionError))?;
                 buff.rewind().or(Err(Error::ImageConversionError))?;
-                epub.add_cover_image("image_cover.jpg", buff, "image/jpg")?;
-                Some("image_cover.jpg")
+                let file_name = format!("image_cover.{}", self.img_ext()?);
+                epub.add_cover_image(&file_name, buff, self.img_mime()?)?;
+                Some(file_name)
             } else {
                 None
             }
@@ -431,11 +456,11 @@ impl<C: AsRef<str>> Repub<C> {
                                             let mut buff = Cursor::new(Vec::new());
                                             // buffer io is safe
                                             image
-                                                .write_to(&mut buff, ImageOutputFormat::Jpeg(7))
+                                                .write_to(&mut buff, self.image_format.clone())
                                                 .unwrap();
                                             buff.rewind().unwrap();
-                                            let name = format!("image_{}.jpg", num);
-                                            epub.add_resource(&name, buff, "image/jpeg")?;
+                                            let name = format!("image_{num}.{}", self.img_ext()?);
+                                            epub.add_resource(&name, buff, self.img_mime()?)?;
                                             Some(ent.insert(name))
                                         } else {
                                             // failed coversion
@@ -589,7 +614,7 @@ impl<C: AsRef<str>> Repub<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EpubVersion, FilterType, ImageHandling, Repub};
+    use super::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
     use epub::doc::EpubDoc;
     use image::{DynamicImage, ImageFormat};
     use std::io::{Cursor, Seek, Write};
@@ -688,7 +713,7 @@ Content-Location: {}
             strip_links: true,
             href_sim_thresh: 1.0,
             image_handling: ImageHandling::Keep,
-            jpeg_quality: 50,
+            image_format: ImageOutputFormat::Jpeg(50),
             css: "div { margin: 1em }",
             max_width: 100,
             max_height: 100,

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use repub::{EpubVersion, FilterType, ImageHandling, Repub};
+use repub::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
 use std::io;
 
 #[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +31,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Style {
-    /// Use default reMarkable configuration
+    /// Use default reMarkable configuration [default]
     Remarkable,
     /// Customize all aspects of configuration
     Custom {
@@ -81,9 +81,13 @@ enum Style {
         #[arg(long, value_enum, default_value_t = Images::Strip)]
         images: Images,
 
-        /// Quality for jpeg export
+        /// encode images as png, superscedes jpeg
+        #[arg(long)]
+        png: bool,
+
+        /// jpeg export with quality [0-100]
         #[arg(long, default_value_t = 90)]
-        jpeg_quality: u8,
+        jpeg: u8,
 
         /// Images wider than this will be resized
         #[arg(long)]
@@ -111,7 +115,8 @@ pub fn main() {
             href_sim_thresh,
             brighten,
             epub_v3,
-            jpeg_quality,
+            png,
+            jpeg,
             images,
             max_width,
             max_height,
@@ -124,7 +129,11 @@ pub fn main() {
             strip_links,
             href_sim_thresh,
             image_handling: images.into(),
-            jpeg_quality,
+            image_format: if png {
+                ImageOutputFormat::Png
+            } else {
+                ImageOutputFormat::Jpeg(jpeg)
+            },
             css: css.unwrap_or_else(|| "".into()),
             max_width: max_width.unwrap_or(u32::MAX),
             max_height: max_height.unwrap_or(u32::MAX),
