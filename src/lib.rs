@@ -625,6 +625,8 @@ impl<C: AsRef<str>> Repub<C> {
 #[cfg(test)]
 mod tests {
     use super::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
     use epub::doc::EpubDoc;
     use image::{DynamicImage, ImageFormat};
     use std::io::{Cursor, Seek, Write};
@@ -639,7 +641,7 @@ mod tests {
         DynamicImage::new_rgb8(1, 1)
             .write_to(&mut img, ImageFormat::Png)
             .unwrap();
-        let img_str = base64::encode(img.into_inner());
+        let img_str = STANDARD.encode(img.into_inner());
 
         let mut res = Vec::new();
         writeln!(

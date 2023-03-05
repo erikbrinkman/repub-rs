@@ -9,7 +9,7 @@ keywords = ["mhtml", "epub", "remarkable"]
 
 [dependencies]
 clap = { version = "4.0.32", features = ["wrap_help", "derive"], optional = true }
-epub-builder = { git = "https://github.com/lise-henry/epub-builder/", version = "0.6.0", rev = "5aebf8ad3980237e2762cac30ceda8730834afa2", default-features = false, features = ["zip-library"] }
+epub-builder = { git = "https://github.com/lise-henry/epub-builder/", version = "0.6.0", rev = "816379f1dff808517b3f3ce2ce20a564e111d359", default-features = false, features = ["zip-library"] }
 eyre = "0.6.8"
 image = "0.24.5"
 kuchiki = "0.8.1"
@@ -20,7 +20,7 @@ readable-readability = "0.4.0"
 strsim = "0.10.0"
 
 [dev-dependencies]
-base64 = "0.20.0"
+base64 = "0.21.0"
 epub = "2.0.0"
 quoted_printable = "0.4.6"
 
