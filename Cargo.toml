@@ -13,10 +13,12 @@ epub-builder = { git = "https://github.com/lise-henry/epub-builder/", version = 
 eyre = "0.6.8"
 image = "0.24.5"
 kuchiki = "0.8.1"
+log = "0.4.17"
 mail-parser = "0.8.0"
 markup5ever = "0.10.1"
 percent-encoding = "2.2.0"
 readable-readability = "0.4.0"
+stderrlog = { version = "0.5.4", optional = true }
 strsim = "0.10.0"
 
 [dev-dependencies]
@@ -25,7 +27,7 @@ epub = "2.0.0"
 quoted_printable = "0.4.6"
 
 [features]
-binary = ["clap"]
+binary = ["clap", "stderrlog"]
 
 [lib]
 name = "repub"

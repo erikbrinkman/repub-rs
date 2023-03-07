@@ -47,6 +47,7 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt::{Display, Error as FmtError, Formatter};
 use std::io::{Cursor, Seek, Write};
+use log::{warn, trace};
 
 /// How to handle images in the summarized article.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -213,9 +214,8 @@ fn new_elem(
     children: impl IntoIterator<Item = NodeRef>,
 ) -> NodeRef {
     let node = NodeRef::new_element(
-        // NOTE the lack of namespace here is important so we close entities like link and img that
-        // go unclosed in html
-        QualName::new(None, ns!(), name.into()),
+        // NOTE the svg namespace here is so that img tags get closed like xml
+        QualName::new(None, ns!(svg), name.into()),
         attributes.into_iter().map(|(ns, prefix, attr, value)| {
             (
                 ExpandedName::new(ns, attr.as_ref()),
@@ -300,9 +300,11 @@ impl<C: AsRef<str>> Repub<C> {
             if dist < thresh {
                 Some((Reverse(dist), href.to_string(), mime, data))
             } else {
+                warn!("didn't find approximate match for image: {decoded}");
                 None
             }
         } else {
+            warn!("didn't find exact match for image: {decoded}");
             None
         }
     }
@@ -608,6 +610,8 @@ impl<C: AsRef<str>> Repub<C> {
         // NOTE kuchiki doesn't appent the trailing xml ?> properly so this is encoded manuall
         let mut content: Vec<_> = r#"<?xml version="1.0" encoding="UTF-8"?>"#.as_bytes().into();
         document.serialize(&mut content).unwrap();
+        trace!("full html: {}", std::str::from_utf8(&content).unwrap());
+
         epub.add_content(
             EpubContent::new("article.xhtml", &*content)
                 .title(title.unwrap_or("[missing title]"))

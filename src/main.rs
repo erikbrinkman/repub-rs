@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use repub::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
 use std::io;
 
@@ -27,6 +27,14 @@ impl From<Images> for ImageHandling {
 struct Cli {
     #[command(subcommand)]
     style: Option<Style>,
+
+    /// Increase logging verbosity
+    #[arg(short, long, action = ArgAction::Count)]
+    verbose: u8,
+
+    /// Disable all logging
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -101,6 +109,11 @@ enum Style {
 
 pub fn main() {
     let args = Cli::parse();
+    stderrlog::new()
+        .verbosity(usize::from(args.verbose))
+        .quiet(args.quiet)
+        .init()
+        .unwrap();
     let mhtml = io::read_to_string(io::stdin()).unwrap();
     match args.style {
         None | Some(Style::Remarkable) => {
