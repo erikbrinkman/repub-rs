@@ -24,6 +24,7 @@ impl From<Images> for ImageHandling {
 
 /// convert a full mhtml into a summarized epub article
 #[derive(Debug, Parser)]
+#[command(version, about)]
 struct Cli {
     #[command(subcommand)]
     style: Option<Style>,
