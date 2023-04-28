@@ -38,6 +38,7 @@ use image::io::Reader;
 pub use image::ImageOutputFormat;
 use image::{DynamicImage, ImageFormat, Pixel};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
+use log::{trace, warn};
 use mail_parser::{Header, HeaderName, HeaderValue, Message, PartType, RfcHeader};
 use markup5ever::{namespace_url, ns, Namespace, Prefix, QualName};
 use readable_readability::Readability;
@@ -47,7 +48,6 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt::{Display, Error as FmtError, Formatter};
 use std::io::{Cursor, Seek, Write};
-use log::{warn, trace};
 
 /// How to handle images in the summarized article.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -248,6 +248,10 @@ fn next_node_skip(node: &NodeRef) -> Option<NodeRef> {
         .or_else(|| node.ancestors().find_map(|n| n.next_sibling()))
 }
 
+// FIXME refactor this so that it is a trait for image processings. Pull this out in an implementer
+// of the trait that's used in default circumstances, then add a path in repub to use native
+// handling as the image processing is slow, and the native browser variants might actually be
+// faster.
 fn brighten(img: DynamicImage, factor: f32) -> DynamicImage {
     let mut rgba = img.into_rgba8();
     for y in 0..rgba.height() {
@@ -311,6 +315,8 @@ impl<C: AsRef<str>> Repub<C> {
 
     /// handle image converstion for storage
     fn convert_img(&self, bytes: &[u8], mime: impl AsRef<str>) -> Option<DynamicImage> {
+        // FIXME make this name more general, and add an option to filter out all black or all
+        // white images. Will want an example of when this happens.
         let cursor = Cursor::new(bytes);
         // use mime, but still try to guess from data
         let img = match ImageFormat::from_mime_type(format!("image/{}", mime.as_ref())) {
@@ -321,7 +327,6 @@ impl<C: AsRef<str>> Repub<C> {
         if img.width() > self.max_width || img.height() > self.max_height {
             img = img.resize(self.max_width, self.max_height, self.filter_type)
         };
-        // since we can't do a cappy brighten, we invert, darken and invert again
         if self.brighten == 1.0 {
             Some(img)
         } else {
