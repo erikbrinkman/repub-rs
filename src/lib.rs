@@ -248,6 +248,7 @@ fn new_attrless_elem(name: &str, children: impl IntoIterator<Item = NodeRef>) ->
 fn next_node(node: &NodeRef) -> Option<NodeRef> {
     node.first_child().or_else(|| next_node_skip(node))
 }
+
 /// next node in traversal order, skipping descendants
 fn next_node_skip(node: &NodeRef) -> Option<NodeRef> {
     node.next_sibling()
@@ -421,19 +422,21 @@ where
                                 let num = images.len();
                                 let path = match (images.entry(url), self.image_handling) {
                                     (Entry::Vacant(ent), _) => {
-                                        if let Some((image, fmt)) =
-                                            self.transform.transform(img, format!("image/{}", mime))
-                                        {
-                                            let name = format!("image_{num}.{}", fmt.ext());
-                                            epub.add_resource(&name, image, fmt.mime())?;
-                                            Some(ent.insert(name))
-                                        } else {
-                                            // failed coversion
-                                            None
-                                        }
+                                        let trans = self
+                                            .transform
+                                            .transform(img, format!("image/{}", mime));
+                                        let name = match trans {
+                                            Some((image, fmt)) => {
+                                                let name = format!("image_{num}.{}", fmt.ext());
+                                                epub.add_resource(&name, image, fmt.mime())?;
+                                                Some(name)
+                                            }
+                                            None => None,
+                                        };
+                                        ent.insert(name).as_ref()
                                     }
                                     (_, ImageHandling::Filter) => None, // already rendered, so filter
-                                    (Entry::Occupied(ent), _) => Some(ent.into_mut()),
+                                    (Entry::Occupied(ent), _) => ent.into_mut().as_ref(),
                                 };
                                 // if path is good insert simple image
                                 if let Some(image_path) = path {
