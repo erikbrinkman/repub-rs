@@ -1,5 +1,5 @@
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use repub::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
+use repub::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, ImgTransform, Repub};
 use std::io;
 
 #[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +118,45 @@ pub fn main() {
     let mhtml = io::read_to_string(io::stdin()).unwrap();
     match args.style {
         None | Some(Style::Remarkable) => {
-            Repub::remarkable().mhtml_to_epub(mhtml, &mut io::stdout().lock())
+            Repub {
+                include_url: false,
+                include_title: true,
+                include_byline: true,
+                include_cover: true,
+                strip_links: true,
+                href_sim_thresh: 0.3,
+                image_handling: ImageHandling::Filter,
+                css: "
+p {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+ul, ol {
+  padding: 1em;
+}
+
+ul li, ol li {
+  margin-left: 1.5em;
+  padding-left: 0.5em;
+}
+
+figcaption {
+  font-size: 0.5rem;
+  font-style: italic;
+}",
+                // FIXME since this is gated, probably want to just put this in the binary?
+                // FIXME in this specific instance, do I need to copy?
+                transform: ImgTransform {
+                    brightness: 1.2,
+                    max_width: 1404,
+                    max_height: 1872,
+                    filter_type: FilterType::Triangle,
+                    output_format: ImageOutputFormat::Jpeg(90),
+                },
+                epub_version: EpubVersion::V30,
+            }
+            .mhtml_to_epub(mhtml, &mut io::stdout().lock())
         }
         Some(Style::Custom {
             include_url,
@@ -143,16 +181,18 @@ pub fn main() {
             strip_links,
             href_sim_thresh,
             image_handling: images.into(),
-            image_format: if png {
-                ImageOutputFormat::Png
-            } else {
-                ImageOutputFormat::Jpeg(jpeg)
-            },
             css: css.unwrap_or_else(|| "".into()),
-            max_width: max_width.unwrap_or(u32::MAX),
-            max_height: max_height.unwrap_or(u32::MAX),
-            filter_type: FilterType::Triangle,
-            brighten,
+            transform: ImgTransform {
+                brightness: brighten,
+                max_width: max_width.unwrap_or(u32::MAX),
+                max_height: max_height.unwrap_or(u32::MAX),
+                filter_type: FilterType::Triangle,
+                output_format: if png {
+                    ImageOutputFormat::Png
+                } else {
+                    ImageOutputFormat::Jpeg(jpeg)
+                },
+            },
             epub_version: if epub_v3 {
                 EpubVersion::V30
             } else {

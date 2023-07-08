@@ -27,16 +27,17 @@
 //! # --boundary--
 //! # "#;
 //! let mut buff = Vec::new();
-//! Repub::remarkable().mhtml_to_epub(mhtml, &mut buff).unwrap();
+//! Repub::default().mhtml_to_epub(mhtml, &mut buff).unwrap();
 //! ```
 #![warn(missing_docs)]
+#[cfg(feature = "image")]
+mod img;
+
 pub use epub_builder::EpubVersion;
 use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
 use eyre::Report;
-pub use image::imageops::FilterType;
-use image::io::Reader;
-pub use image::ImageOutputFormat;
-use image::{DynamicImage, ImageFormat, Pixel};
+#[cfg(feature = "image")]
+pub use img::{FilterType, ImageOutputFormat, ImgTransform};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
 use log::{trace, warn};
 use mail_parser::{Header, HeaderName, HeaderValue, Message, PartType, RfcHeader};
@@ -47,7 +48,35 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt::{Display, Error as FmtError, Formatter};
-use std::io::{Cursor, Seek, Write};
+use std::io::{Read, Write};
+
+/// The image format of the transformed image
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImageFormat {
+    /// a jpeg image
+    #[default]
+    Jpeg,
+    /// a png image
+    Png,
+}
+
+impl ImageFormat {
+    /// get the extension of the image format
+    fn ext(&self) -> &'static str {
+        match self {
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Png => "png",
+        }
+    }
+
+    /// get the mimetype of the image format
+    fn mime(&self) -> &'static str {
+        match self {
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Png => "image/png",
+        }
+    }
+}
 
 /// How to handle images in the summarized article.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -63,7 +92,7 @@ pub enum ImageHandling {
 
 /// The main class for converting mhtml
 #[derive(Debug)]
-pub struct Repub<Css> {
+pub struct Repub<Css, Trans> {
     /// if true, inclue the origin url at the top of the article
     pub include_url: bool,
     /// if true, add the article as an `h1` tag preceeding the content
@@ -83,69 +112,50 @@ pub struct Repub<Css> {
     pub href_sim_thresh: f64,
     /// how to handle images
     pub image_handling: ImageHandling,
-    /// format for images
-    ///
-    /// Conversion will error if this isn't Jpeg or Png
-    pub image_format: ImageOutputFormat,
     /// optional css content to render to the final epub
     pub css: Css,
-    /// images wider than this will be resized
-    pub max_width: u32,
-    /// images taller than this will be resized
-    pub max_height: u32,
-    /// the filter to use when resizing
-    pub filter_type: FilterType,
-    /// a float value to brighten all images
-    ///
-    /// The remarkable canvas is a little dark. Setting this to a value slightly above one will
-    /// brighten each image giving them a little better contrast on a remarkable screen. Setting to
-    /// 1.0 keeps images unchanged.
-    pub brighten: f32,
+    /// function to transform images
+    pub transform: Trans,
     /// the version of epub to write
     pub epub_version: EpubVersion,
 }
 
-impl Repub<&'static str> {
-    /// default settings for targeting a remarkable
-    pub fn remarkable() -> Self {
-        Self {
-            include_url: false,
-            include_title: true,
-            include_byline: true,
-            include_cover: true,
-            strip_links: true,
-            href_sim_thresh: 0.3,
-            image_handling: ImageHandling::Filter,
-            image_format: ImageOutputFormat::Jpeg(90),
-            css: "
-p {
-  margin-top: 1em;
-  margin-bottom: 1em;
+/// a method for altering images for inclusion
+pub trait ImageTransform {
+    /// The result of transforming the image
+    type Output<'a>: Read + 'a;
+
+    /// alter an image buffer with mime
+    ///
+    /// Return None to remove the image, otherwise include the format of the processed image.
+    fn transform<'a, S: AsRef<str>>(
+        &self,
+        buff: &'a [u8],
+        mime: S,
+    ) -> Option<(Self::Output<'a>, ImageFormat)>;
 }
 
-ul, ol {
-  padding: 1em;
-}
+/// a transform that preserves valid iamge types, and ignores all others
+pub struct NoopTransform;
 
-ul li, ol li {
-  margin-left: 1.5em;
-  padding-left: 0.5em;
-}
+impl ImageTransform for NoopTransform {
+    type Output<'a> = &'a [u8];
 
-figcaption {
-  font-size: 0.5rem;
-  font-style: italic;
-}",
-            max_width: 1404,
-            max_height: 1872,
-            filter_type: FilterType::Triangle,
-            brighten: 1.2,
-            epub_version: EpubVersion::V30,
-        }
+    fn transform<'a, S: AsRef<str>>(
+        &self,
+        buff: &'a [u8],
+        mime: S,
+    ) -> Option<(Self::Output<'a>, ImageFormat)> {
+        let fmt = match mime.as_ref() {
+            "image/jpeg" => Some(ImageFormat::Jpeg),
+            "image/png" => Some(ImageFormat::Png),
+            _ => None,
+        }?;
+        Some((buff, fmt))
     }
 }
 
-impl Default for Repub<&'static str> {
+impl Default for Repub<&'static str, NoopTransform> {
     /// creates minimalist settings that have the least "impact" but probably aren't desired
     fn default() -> Self {
         Self {
@@ -156,12 +166,8 @@ impl Default for Repub<&'static str> {
             strip_links: false,
             href_sim_thresh: 0.0,
             image_handling: ImageHandling::default(),
-            image_format: ImageOutputFormat::Png,
             css: "",
-            max_width: u32::MAX,
-            max_height: u32::MAX,
-            filter_type: FilterType::Triangle,
-            brighten: 1.0,
+            transform: NoopTransform,
             epub_version: EpubVersion::V20,
         }
     }
@@ -248,41 +254,11 @@ fn next_node_skip(node: &NodeRef) -> Option<NodeRef> {
         .or_else(|| node.ancestors().find_map(|n| n.next_sibling()))
 }
 
-// FIXME refactor this so that it is a trait for image processings. Pull this out in an implementer
-// of the trait that's used in default circumstances, then add a path in repub to use native
-// handling as the image processing is slow, and the native browser variants might actually be
-// faster.
-fn brighten(img: DynamicImage, factor: f32) -> DynamicImage {
-    let mut rgba = img.into_rgba8();
-    for y in 0..rgba.height() {
-        for x in 0..rgba.width() {
-            let &(mut val) = rgba.get_pixel(x, y);
-            val.apply_without_alpha(|c| u8::MAX - ((u8::MAX - c) as f32 / factor) as u8);
-            rgba.put_pixel(x, y, val);
-        }
-    }
-    DynamicImage::ImageRgba8(rgba)
-}
-
-impl<C: AsRef<str>> Repub<C> {
-    ///  extension of written images
-    fn img_ext(&self) -> Result<&'static str, Error> {
-        match self.image_format {
-            ImageOutputFormat::Png => Ok("png"),
-            ImageOutputFormat::Jpeg(_) => Ok("jpg"),
-            _ => Err(Error::InvalidImageFormat),
-        }
-    }
-
-    /// mime type of written images
-    fn img_mime(&self) -> Result<&'static str, Error> {
-        match self.image_format {
-            ImageOutputFormat::Png => Ok("image/png"),
-            ImageOutputFormat::Jpeg(_) => Ok("image/jpeg"),
-            _ => Err(Error::InvalidImageFormat),
-        }
-    }
-
+impl<C, T> Repub<C, T>
+where
+    C: AsRef<str>,
+    T: ImageTransform,
+{
     /// find a close match to an image url
     fn find_url<'a>(
         &self,
@@ -310,27 +286,6 @@ impl<C: AsRef<str>> Repub<C> {
         } else {
             warn!("didn't find exact match for image: {decoded}");
             None
-        }
-    }
-
-    /// handle image converstion for storage
-    fn convert_img(&self, bytes: &[u8], mime: impl AsRef<str>) -> Option<DynamicImage> {
-        // FIXME make this name more general, and add an option to filter out all black or all
-        // white images. Will want an example of when this happens.
-        let cursor = Cursor::new(bytes);
-        // use mime, but still try to guess from data
-        let img = match ImageFormat::from_mime_type(format!("image/{}", mime.as_ref())) {
-            Some(fmt) => Reader::with_format(cursor, fmt),
-            None => Reader::new(cursor),
-        };
-        let mut img = img.with_guessed_format().ok()?.decode().ok()?;
-        if img.width() > self.max_width || img.height() > self.max_height {
-            img = img.resize(self.max_width, self.max_height, self.filter_type)
-        };
-        if self.brighten == 1.0 {
-            Some(img)
-        } else {
-            Some(brighten(img, self.brighten))
         }
     }
 
@@ -405,21 +360,18 @@ impl<C: AsRef<str>> Repub<C> {
 
         // fetch and save cover image if requested and valid
         let cover_img = if self.include_cover {
-            if let Some(image) = meta
+            if let Some((image, fmt)) = meta
                 .image_url
                 .as_ref()
                 // NOTE we use fuzzy matching, but don't sync with other images
                 .and_then(|cover| self.find_url(&image_data, cover))
                 // TODO make cover image a little smaller so it fits with title?
-                .and_then(|(_, _, mime, img)| self.convert_img(img, mime))
+                .and_then(|(_, _, mime, img)| {
+                    self.transform.transform(img, format!("image/{}", mime))
+                })
             {
-                let mut buff = Cursor::new(Vec::new());
-                image
-                    .write_to(&mut buff, self.image_format.clone())
-                    .or(Err(Error::ImageConversionError))?;
-                buff.rewind().or(Err(Error::ImageConversionError))?;
-                let file_name = format!("image_cover.{}", self.img_ext()?);
-                epub.add_cover_image(&file_name, buff, self.img_mime()?)?;
+                let file_name = format!("image_cover.{}", fmt.ext());
+                epub.add_cover_image(&file_name, image, fmt.mime())?;
                 Some(file_name)
             } else {
                 None
@@ -469,15 +421,11 @@ impl<C: AsRef<str>> Repub<C> {
                                 let num = images.len();
                                 let path = match (images.entry(url), self.image_handling) {
                                     (Entry::Vacant(ent), _) => {
-                                        if let Some(image) = self.convert_img(img, mime) {
-                                            let mut buff = Cursor::new(Vec::new());
-                                            // buffer io is safe
-                                            image
-                                                .write_to(&mut buff, self.image_format.clone())
-                                                .unwrap();
-                                            buff.rewind().unwrap();
-                                            let name = format!("image_{num}.{}", self.img_ext()?);
-                                            epub.add_resource(&name, buff, self.img_mime()?)?;
+                                        if let Some((image, fmt)) =
+                                            self.transform.transform(img, format!("image/{}", mime))
+                                        {
+                                            let name = format!("image_{num}.{}", fmt.ext());
+                                            epub.add_resource(&name, image, fmt.mime())?;
                                             Some(ent.insert(name))
                                         } else {
                                             // failed coversion
@@ -612,7 +560,7 @@ impl<C: AsRef<str>> Repub<C> {
         document.append(html_node);
 
         // actually append content
-        // NOTE kuchiki doesn't appent the trailing xml ?> properly so this is encoded manuall
+        // NOTE kuchiki doesn't appent the trailing xml ?> properly so this is encoded manually
         let mut content: Vec<_> = r#"<?xml version="1.0" encoding="UTF-8"?>"#.as_bytes().into();
         document.serialize(&mut content).unwrap();
         trace!("full html: {}", std::str::from_utf8(&content).unwrap());
@@ -632,12 +580,13 @@ impl<C: AsRef<str>> Repub<C> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "image")]
 mod tests {
-    use super::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, Repub};
+    use super::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, ImgTransform, Repub};
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
     use epub::doc::EpubDoc;
-    use image::{DynamicImage, ImageFormat};
+    use image::DynamicImage;
     use std::io::{Cursor, Seek, Write};
 
     fn create_mhtml(
@@ -648,7 +597,7 @@ mod tests {
     ) -> String {
         let mut img = Cursor::new(Vec::new());
         DynamicImage::new_rgb8(1, 1)
-            .write_to(&mut img, ImageFormat::Png)
+            .write_to(&mut img, ImageOutputFormat::Png)
             .unwrap();
         let img_str = STANDARD.encode(img.into_inner());
 
@@ -718,6 +667,7 @@ Content-Location: {}
     }
 
     #[test]
+    #[cfg(feature = "image")]
     fn options() {
         let mhtml = create_mhtml(
             r#"<!doctype html><html><head></head><body><div><p>text</p><img src="close_img.png" alt="info"><p>more text</p></body></html>"#,
@@ -734,12 +684,14 @@ Content-Location: {}
             strip_links: true,
             href_sim_thresh: 1.0,
             image_handling: ImageHandling::Keep,
-            image_format: ImageOutputFormat::Jpeg(50),
             css: "div { margin: 1em }",
-            max_width: 100,
-            max_height: 100,
-            filter_type: FilterType::CatmullRom,
-            brighten: 1.2,
+            transform: ImgTransform {
+                brightness: 1.2,
+                max_width: 100,
+                max_height: 100,
+                filter_type: FilterType::CatmullRom,
+                output_format: ImageOutputFormat::Jpeg(50),
+            },
             epub_version: EpubVersion::V20,
         }
         .mhtml_to_epub(&mhtml, &mut buff)

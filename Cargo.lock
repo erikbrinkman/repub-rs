@@ -377,7 +377,7 @@ dependencies = [
 [[package]]
 name = "epub-builder"
 version = "0.6.0"
-source = "git+https://github.com/lise-henry/epub-builder/?rev=816379f1dff808517b3f3ce2ce20a564e111d359#816379f1dff808517b3f3ce2ce20a564e111d359"
+source = "git+https://github.com/lise-henry/epub-builder/?rev=5c1f9068f88c3ae6d36149de10bdf7e6ce6333df#5c1f9068f88c3ae6d36149de10bdf7e6ce6333df"
 dependencies = [
  "chrono",
  "eyre",
@@ -385,7 +385,6 @@ dependencies = [
  "log 0.4.19",
  "mustache",
  "once_cell",
- "regex",
  "uuid",
  "zip",
 ]
