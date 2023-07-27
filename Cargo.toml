@@ -8,23 +8,23 @@ license = "MIT"
 keywords = ["mhtml", "epub", "remarkable"]
 
 [dependencies]
-clap = { version = "4.0.32", features = ["wrap_help", "derive"], optional = true }
-epub-builder = { git = "https://github.com/lise-henry/epub-builder/", version = "0.6.0", rev = "5c1f9068f88c3ae6d36149de10bdf7e6ce6333df", default-features = false, features = ["zip-library"] }
+clap = { version = "4.0", features = ["wrap_help", "derive"], optional = true }
+epub-builder = { git = "https://github.com/lise-henry/epub-builder/", version = "0.6.0", rev = "ca43e0a", default-features = false, features = ["zip-library"] }
 eyre = "0.6.8"
-image = { version = "0.24.5", optional = true }
-kuchiki = "0.8.1"
-log = "0.4.17"
-mail-parser = "0.8.0"
-markup5ever = "0.10.1"
-percent-encoding = "2.2.0"
-readable-readability = "0.4.0"
-stderrlog = { version = "0.5.4", optional = true }
-strsim = "0.10.0"
+image = { version = "0.24", optional = true }
+kuchiki = "0.8"
+log = "0.4"
+mail-parser = "0.8"
+markup5ever = "0.10"
+percent-encoding = "2.2"
+readable-readability = "0.4"
+stderrlog = { version = "0.5", optional = true }
+strsim = "0.10"
 
 [dev-dependencies]
-base64 = "0.21.0"
-epub = "2.0.0"
-quoted_printable = "0.4.6"
+base64 = "0.21"
+epub = "2.0"
+quoted_printable = "0.5"
 
 [features]
 binary = ["clap", "stderrlog", "image"]
