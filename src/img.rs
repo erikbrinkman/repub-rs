@@ -6,20 +6,19 @@ use image::{DynamicImage, Pixel};
 use std::io::{Cursor, Seek};
 
 /// brighten a dynamic image
-// FIXME chnage fqactor to u8
 fn brighten(img: DynamicImage, factor: f32) -> DynamicImage {
     let mut rgba = img.into_rgba8();
+    let inv = ((1 << 8) as f32 / factor) as u16;
     for y in 0..rgba.height() {
         for x in 0..rgba.width() {
             let &(mut val) = rgba.get_pixel(x, y);
-            val.apply_without_alpha(|c| u8::MAX - ((u8::MAX - c) as f32 / factor) as u8);
+            val.apply_without_alpha(|c| u8::MAX - (((u8::MAX - c) as u16 * inv) >> 8) as u8);
             rgba.put_pixel(x, y, val);
         }
     }
     DynamicImage::ImageRgba8(rgba)
 }
 
-// FIXME option to strip if all black
 /// create a transform using the image library
 ///
 /// This transform supports tweaking the brightness, rescaling, and outputing in an arbitrary
@@ -50,7 +49,6 @@ impl ImageTransform for ImgTransform {
         // white images. Will want an example of when this happens.
         let cursor = Cursor::new(bytes);
         // use mime, but still try to guess from data
-        // FIXME move
         let img = match image::ImageFormat::from_mime_type(mime) {
             Some(fmt) => Reader::with_format(cursor, fmt),
             None => Reader::new(cursor),

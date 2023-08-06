@@ -117,16 +117,15 @@ pub fn main() {
         .unwrap();
     let mhtml = io::read_to_string(io::stdin()).unwrap();
     match args.style {
-        None | Some(Style::Remarkable) => {
-            Repub {
-                include_url: false,
-                include_title: true,
-                include_byline: true,
-                include_cover: true,
-                strip_links: true,
-                href_sim_thresh: 0.3,
-                image_handling: ImageHandling::Filter,
-                css: "
+        None | Some(Style::Remarkable) => Repub {
+            include_url: false,
+            include_title: true,
+            include_byline: true,
+            include_cover: true,
+            strip_links: true,
+            href_sim_thresh: 0.3,
+            image_handling: ImageHandling::Filter,
+            css: "
 p {
   margin-top: 1em;
   margin-bottom: 1em;
@@ -145,19 +144,16 @@ figcaption {
   font-size: 0.5rem;
   font-style: italic;
 }",
-                // FIXME since this is gated, probably want to just put this in the binary?
-                // FIXME in this specific instance, do I need to copy?
-                transform: ImgTransform {
-                    brightness: 1.2,
-                    max_width: 1404,
-                    max_height: 1872,
-                    filter_type: FilterType::Triangle,
-                    output_format: ImageOutputFormat::Jpeg(90),
-                },
-                epub_version: EpubVersion::V30,
-            }
-            .mhtml_to_epub(mhtml, &mut io::stdout().lock())
+            transform: ImgTransform {
+                brightness: 1.2,
+                max_width: 1404,
+                max_height: 1872,
+                filter_type: FilterType::Triangle,
+                output_format: ImageOutputFormat::Jpeg(90),
+            },
+            epub_version: EpubVersion::V30,
         }
+        .mhtml_to_epub(mhtml, &mut io::stdout().lock()),
         Some(Style::Custom {
             include_url,
             include_title,
