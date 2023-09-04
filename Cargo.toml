@@ -1,8 +1,8 @@
 [package]
-name = "repub"
+name = "repub-rs"
 version = "0.1.0"
 edition = "2021"
-description = "Rust library and binary for converting mhtml webpages into summarized epubs"
+description = "Rust library and binary for converting mhtml webpages into remarkable-style summarized epubs"
 repository = "https://github.com/erikbrinkman/repub-rs"
 license = "MIT"
 keywords = ["mhtml", "epub", "remarkable"]
@@ -33,5 +33,5 @@ binary = ["clap", "stderrlog", "image"]
 name = "repub"
 
 [[bin]]
-name = "repub"
+name = "repub-rs"
 required-features = ["binary"]
