@@ -40,7 +40,7 @@ use eyre::Report;
 pub use img::{FilterType, ImageOutputFormat, ImgTransform};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
 use log::{trace, warn};
-use mail_parser::{Header, HeaderName, HeaderValue, Message, PartType, RfcHeader};
+use mail_parser::{Header, HeaderName, HeaderValue, MessageParser, PartType};
 use markup5ever::{namespace_url, ns, Namespace, Prefix, QualName};
 use readable_readability::Readability;
 use std::cmp::Reverse;
@@ -206,10 +206,13 @@ impl From<Report> for Error {
 }
 
 /// convenience for getting a header
-fn get_header<'a, 'b>(headers: &'a [Header<'b>], rfc: RfcHeader) -> Option<&'a HeaderValue<'b>> {
+fn get_header<'a, 'b>(
+    headers: &'a [Header<'b>],
+    header: HeaderName,
+) -> Option<&'a HeaderValue<'b>> {
     headers
         .iter()
-        .find(|head| head.name == HeaderName::Rfc(rfc))
+        .find(|head| head.name == header)
         .map(|head| &head.value)
 }
 
@@ -297,17 +300,20 @@ where
         out: &mut impl Write,
     ) -> Result<Option<String>, Error> {
         // parse mhtml and get get header values
-        let msg = Message::parse(mhtml.as_ref().as_bytes()).ok_or(Error::MhtmlParseError)?;
+        let msg = MessageParser::default()
+            .parse(mhtml.as_ref().as_bytes())
+            .ok_or(Error::MhtmlParseError)?;
         let (first, rest) = msg.parts.split_first().ok_or(Error::MhtmlFormatError)?;
-        let subject = get_header(&first.headers, RfcHeader::Subject).and_then(|val| match val {
+        let subject = get_header(&first.headers, HeaderName::Subject).and_then(|val| match val {
             HeaderValue::Text(title) => Some(title.as_ref()),
             _ => None,
         });
         let (main, resources) = rest.split_first().ok_or(Error::MhtmlFormatError)?;
-        let loc = get_header(&main.headers, RfcHeader::ContentLocation).and_then(|val| match val {
-            HeaderValue::Text(loc) => Some(loc),
-            _ => None,
-        });
+        let loc =
+            get_header(&main.headers, HeaderName::ContentLocation).and_then(|val| match val {
+                HeaderValue::Text(loc) => Some(loc),
+                _ => None,
+            });
         let html = if let PartType::Html(content) = &main.body {
             Ok(content)
         } else {
@@ -333,8 +339,8 @@ where
         // fetch images from resources
         let mut image_data = BTreeMap::new();
         for attach in resources {
-            let ctype = get_header(&attach.headers, RfcHeader::ContentType);
-            let loc = get_header(&attach.headers, RfcHeader::ContentLocation);
+            let ctype = get_header(&attach.headers, HeaderName::ContentType);
+            let loc = get_header(&attach.headers, HeaderName::ContentLocation);
             if let (
                 Some(HeaderValue::ContentType(ctype)),
                 Some(HeaderValue::Text(loc)),

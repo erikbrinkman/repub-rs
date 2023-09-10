@@ -14,7 +14,7 @@ eyre = "0.6.8"
 image = { version = "0.24", optional = true }
 kuchiki = "0.8"
 log = "0.4"
-mail-parser = "0.8"
+mail-parser = "0.9"
 markup5ever = "0.10"
 percent-encoding = "2.2"
 readable-readability = "0.4"
