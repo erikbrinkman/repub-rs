@@ -37,7 +37,7 @@ pub use epub_builder::EpubVersion;
 use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
 use eyre::Report;
 #[cfg(feature = "image")]
-pub use img::{FilterType, ImageOutputFormat, ImgTransform};
+pub use img::{FilterType, ImgTransform};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
 use log::{trace, warn};
 use mail_parser::{Header, HeaderName, HeaderValue, MessageParser, PartType};
@@ -591,7 +591,7 @@ where
 #[cfg(test)]
 #[cfg(feature = "image")]
 mod tests {
-    use super::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, ImgTransform, Repub};
+    use super::{EpubVersion, FilterType, ImageHandling, ImageFormat, ImgTransform, Repub};
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
     use epub::doc::EpubDoc;
@@ -606,7 +606,7 @@ mod tests {
     ) -> String {
         let mut img = Cursor::new(Vec::new());
         DynamicImage::new_rgb8(1, 1)
-            .write_to(&mut img, ImageOutputFormat::Png)
+            .write_to(&mut img, image::ImageFormat::Png)
             .unwrap();
         let img_str = STANDARD.encode(img.into_inner());
 
@@ -699,7 +699,7 @@ Content-Location: {}
                 max_width: 100,
                 max_height: 100,
                 filter_type: FilterType::CatmullRom,
-                output_format: ImageOutputFormat::Jpeg(50),
+                output_format: ImageFormat::Jpeg,
             },
             epub_version: EpubVersion::V20,
         }

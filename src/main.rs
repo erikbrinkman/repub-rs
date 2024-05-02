@@ -1,5 +1,5 @@
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use repub::{EpubVersion, FilterType, ImageHandling, ImageOutputFormat, ImgTransform, Repub};
+use repub::{EpubVersion, FilterType, ImageFormat, ImageHandling, ImgTransform, Repub};
 use std::io;
 
 #[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
@@ -94,10 +94,6 @@ enum Style {
         #[arg(long)]
         png: bool,
 
-        /// jpeg export with quality [0-100]
-        #[arg(long, default_value_t = 90)]
-        jpeg: u8,
-
         /// Images wider than this will be resized
         #[arg(long)]
         max_width: Option<u32>,
@@ -149,7 +145,7 @@ figcaption {
                 max_width: 1404,
                 max_height: 1872,
                 filter_type: FilterType::Triangle,
-                output_format: ImageOutputFormat::Jpeg(90),
+                output_format: ImageFormat::Jpeg,
             },
             epub_version: EpubVersion::V30,
         }
@@ -164,7 +160,6 @@ figcaption {
             brighten,
             epub_v3,
             png,
-            jpeg,
             images,
             max_width,
             max_height,
@@ -184,9 +179,9 @@ figcaption {
                 max_height: max_height.unwrap_or(u32::MAX),
                 filter_type: FilterType::Triangle,
                 output_format: if png {
-                    ImageOutputFormat::Png
+                    ImageFormat::Png
                 } else {
-                    ImageOutputFormat::Jpeg(jpeg)
+                    ImageFormat::Jpeg
                 },
             },
             epub_version: if epub_v3 {

@@ -1,7 +1,7 @@
 use super::{ImageFormat, ImageTransform};
 pub use image::imageops::FilterType;
 use image::io::Reader;
-pub use image::ImageOutputFormat;
+pub use image::ImageFormat as ImgFormat;
 use image::{DynamicImage, Pixel};
 use std::io::{Cursor, Seek};
 
@@ -33,7 +33,7 @@ pub struct ImgTransform {
     /// how to fillter when resizing the image
     pub filter_type: FilterType,
     /// what format to output the image in
-    pub output_format: ImageOutputFormat,
+    pub output_format: ImageFormat,
 }
 
 impl ImageTransform for ImgTransform {
@@ -64,12 +64,13 @@ impl ImageTransform for ImgTransform {
         };
         let mut buff = Cursor::new(Vec::new());
         let out_fmt = match &self.output_format {
-            ImageOutputFormat::Jpeg(_) => Some(ImageFormat::Jpeg),
-            ImageOutputFormat::Png => Some(ImageFormat::Png),
-            _ => None,
-        }?;
-        img.write_to(&mut buff, self.output_format.clone()).ok()?;
+            ImageFormat::Jpeg => ImgFormat::Jpeg,
+            ImageFormat::Png => ImgFormat::Png,
+        };
+        // NOTE we need to convert this into an image without alpha before saving as jpeg
+        img.into_rgb8().write_to(&mut buff, out_fmt).unwrap();
+        // img.write_to(&mut buff, out_fmt).ok()?;
         buff.rewind().ok()?;
-        Some((buff, out_fmt))
+        Some((buff, self.output_format))
     }
 }
