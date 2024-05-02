@@ -1,6 +1,6 @@
 [package]
 name = "repub-rs"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "Rust library and binary for converting mhtml webpages into remarkable-style summarized epubs"
 repository = "https://github.com/erikbrinkman/repub-rs"
