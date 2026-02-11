@@ -34,8 +34,7 @@
 mod img;
 
 pub use epub_builder::EpubVersion;
-use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
-use eyre::Report;
+use epub_builder::{self, EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
 #[cfg(feature = "image")]
 pub use img::{FilterType, ImgTransform};
 use kuchiki::{Attribute, ExpandedName, NodeRef};
@@ -199,8 +198,8 @@ impl Display for Error {
 
 impl StdError for Error {}
 
-impl From<Report> for Error {
-    fn from(_: Report) -> Self {
+impl From<epub_builder::Error> for Error {
+    fn from(_: epub_builder::Error) -> Self {
         Error::EpubCreationError
     }
 }
@@ -591,7 +590,7 @@ where
 #[cfg(test)]
 #[cfg(feature = "image")]
 mod tests {
-    use super::{EpubVersion, FilterType, ImageHandling, ImageFormat, ImgTransform, Repub};
+    use super::{EpubVersion, FilterType, ImageFormat, ImageHandling, ImgTransform, Repub};
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
     use epub::doc::EpubDoc;
